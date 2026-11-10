@@ -54,10 +54,57 @@
 ```
 
 雷诺数的定义沿用二维代码：方腔 `Re = u·ny/ν`，通道 `Re = (2/3·u)·ny/ν`。
-障碍物文件用 `scripts/make_obstacle.py` 生成（圆球或沿 z 的圆柱）。
+障碍物文件用 `scripts/make_obstacle.py` 生成（圆球或沿 z 的圆柱），或者用 `scripts/voxelize.py`
+把三角网格模型（3MF / STL）体素化得到，见下面“任意几何”一节。
 
 输出在 `lbm3d/outputs3d/`：`frame_XXXX.vtk`（速度、密度、障碍物）、`forces.txt`（受力和 Cd/Cl/Cs）。
-`scripts/plotting3D.py` 画 z、y 两个中截面的速度大小；三维渲染直接用 ParaView 打开 vtk。
+`scripts/plotting3D.py` 画 z、y 两个中截面的速度大小；`scripts/render3D.py` 出鸟瞰视角的动画；也可以直接用 ParaView 打开 vtk。
+
+## 任意几何：把三维模型体素化
+
+求解器只认“固体格点列表”。`scripts/voxelize.py` 把封闭的三角网格（3MF 或 STL，只依赖 numpy）转成这种输入文件：
+沿 z 方向对每个 (x, y) 格点列做射线求交，按三角形朝向累加环绕数，环绕数非零的格点中心在模型内部，
+所以互相重叠的多个封闭零件会被正确地合并。
+
+```bash
+python3 lbm3d/scripts/voxelize.py lbm3d/models/kun.3mf --info     # 列出零件和包围盒
+python3 lbm3d/scripts/voxelize.py lbm3d/models/kun.3mf --move 1 4.71 134.5 1.08 --rot y-90 \
+        --size 448 192 192 --height 128 --re 1000 --steps 60000 --u 0.08 \
+        -o lbm3d/data/kun.txt --preview kun_voxels.png
+```
+
+- `--rot`：依次绕各轴旋转（度）。求解器里来流沿 +x，y 向上；z 轴朝上的模型用 `x-90`。
+- `--move 零件号 dx dy dz`：先平移某个零件，用来拼装分件存放的模型。
+- `--height`：模型在 y 方向占多少格；模型默认站在底面壁上、z 向居中，中心在 x = nx/4（`--xpos`、`--float` 可改）。
+- `--preview`：输出三个方向的体素深度图，跑流场之前先确认形状和朝向。
+
+模型文件放在 `lbm3d/models/`，该目录不进版本库。
+
+### 算例：人物手办绕流
+
+模型是一个分成头和身子两件打印的手办（3MF，共 39 万个三角形）。两个零件都平躺在打印板上，
+量出头部颈榫和身子颈孔的位置后用 `--move` 把头装回去，再转成正面迎风。
+
+![voxels](docs/kun_voxels.png)
+
+448×192×192（1650 万格点，其中固体 22.7 万），Re = 1000（按通道高度；按人物宽度约 450），6 万步。
+RTX 5060 上 1826 MLUPS，时间循环约 9 分钟，显存 2.4 GB。尾迹是非定常的，阻力系数在 3.64–3.76 之间摆动，
+3 万步之后的平均值 Cd ≈ 3.70（以平均入口速度和迎风面积为基准；通道堵塞比 20%，且人物站在壁面边界层里，
+所以这个数只对本算例有意义）。Re = 600 时流动基本定常，Cd ≈ 4.09；Re = 1500 在这个分辨率下发散。
+
+![flow](docs/kun_flow.gif)
+
+动画里是速度大小：水平切片在 y = 24（腿部高度），竖直切片在人物身后的中截面上。用下面的命令复现，
+120 帧 vtk 共约 34 GB：
+
+```bash
+./build3d/lbm3d lbm3d/data/kun.txt 120 -gpu -out=lbm3d/outputs3d
+python3 lbm3d/scripts/render3D.py lbm3d/outputs3d --yslice 24 --zslice-from 150 --azim 40 --elev 28 \
+        --px 1.6 --fps 14 -o kun_flow.gif
+```
+
+`scripts/render3D.py` 是一个不依赖 ParaView 的鸟瞰渲染脚本（numpy + scipy + Pillow）：正交相机，
+视线穿过障碍物掩码求出实体表面并做光照，两张速度切片半透明地叠在上面。
 
 ## 代码结构
 

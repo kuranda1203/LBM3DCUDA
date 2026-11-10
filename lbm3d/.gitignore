@@ -1,3 +1,4 @@
+/models/
 outputs3d/*
 !outputs3d/.gitkeep
 __pycache__/
