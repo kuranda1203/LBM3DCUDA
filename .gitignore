@@ -13,3 +13,5 @@ _deps
 /.vscode/settings.json
 /outputs/
 env/
+/build3d*/
+.DS_Store
